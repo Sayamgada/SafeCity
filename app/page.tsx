@@ -28,7 +28,7 @@ export default async function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Wider (2/3) */}
           <div className="lg:col-span-2 space-y-6">
-            <CityCrimeMap incidents={data.incidents} />
+            <CityCrimeMap incidents={data.incidents} mlAnalytics={data.mlAnalytics} />
           </div>
           
           {/* Right Column - Narrower (1/3) */}

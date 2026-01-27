@@ -25,13 +25,21 @@ interface CrimeDataPoint {
 interface MapViewProps {
   crimeData: CrimeDataPoint[];
   viewMode: 'heatmap' | 'zones';
+  hotspots?: Array<{
+    center: { lat: number; lng: number };
+    radius: number; // km
+    incidents: any[];
+    intensity: number; // 0-100
+    rank?: number;
+  }>;
 }
 
-export default function MapView({ crimeData, viewMode }: MapViewProps) {
+export default function MapView({ crimeData, viewMode, hotspots }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
   const markersLayer = useRef<L.LayerGroup | null>(null);
   const heatmapLayer = useRef<any>(null);
+  const hotspotsLayer = useRef<L.LayerGroup | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
@@ -60,6 +68,7 @@ export default function MapView({ crimeData, viewMode }: MapViewProps) {
 
     // Initialize layers
     markersLayer.current = L.layerGroup().addTo(map);
+    hotspotsLayer.current = L.layerGroup().addTo(map);
     setMapReady(true);
 
     return () => {
@@ -68,6 +77,7 @@ export default function MapView({ crimeData, viewMode }: MapViewProps) {
         mapInstance.current = null;
       }
       markersLayer.current = null;
+      hotspotsLayer.current = null;
       setMapReady(false);
     };
   }, [isClient]);
@@ -82,6 +92,7 @@ export default function MapView({ crimeData, viewMode }: MapViewProps) {
 
     // Clear existing markers
     markersLayer.current.clearLayers();
+    if (hotspotsLayer.current) hotspotsLayer.current.clearLayers();
 
     if (viewMode === 'zones') {
       // Create marker clusters manually
@@ -196,7 +207,45 @@ export default function MapView({ crimeData, viewMode }: MapViewProps) {
       });
       console.log('Added', crimeData.length, 'individual markers in heatmap mode');
     }
-  }, [crimeData, viewMode, mapReady]);
+
+    // Render hotspots (ML-generated clusters)
+    if (hotspots && hotspotsLayer.current) {
+      hotspots.forEach((h) => {
+        try {
+          const lat = h.center?.lat || (h.center && h.center[0]);
+          const lng = h.center?.lng || (h.center && h.center[1]);
+          const intensity = Math.max(0, Math.min(100, h.intensity || 0));
+
+          // color ramp: green (low) -> orange -> red (high)
+          const color = intensity > 66 ? '#dc2626' : intensity > 33 ? '#f97316' : '#16a34a';
+
+          // radius meters: convert km to meters and add intensity scaling
+          const radiusMeters = Math.max(100, Math.round((h.radius || 0.5) * 1000 * (1 + intensity / 100)));
+
+          const circle = L.circle([lat, lng], {
+            radius: radiusMeters,
+            color: color,
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 0.18,
+          });
+
+          const popup = `
+            <div style="min-width:180px">
+              <div style="font-weight:700;margin-bottom:6px">Hotspot ${h.rank ?? ''}</div>
+              <div style="margin-bottom:6px">Incidents: ${h.incidents?.length ?? ''}</div>
+              <div style="margin-bottom:6px">Intensity: ${intensity}</div>
+            </div>
+          `;
+
+          circle.bindPopup(popup);
+          hotspotsLayer.current!.addLayer(circle);
+        } catch (e) {
+          console.warn('Failed to render hotspot', e);
+        }
+      });
+    }
+  }, [crimeData, viewMode, mapReady, hotspots]);
 
   if (!isClient) {
     return (

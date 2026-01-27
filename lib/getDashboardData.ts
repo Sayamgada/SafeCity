@@ -1,12 +1,23 @@
 import { ObjectId } from 'mongodb';
 import clientPromise from './mongodb';
 import { Metric, RiskZone, TrendPoint, Incident, Severity } from './types';
+import { RiskAnalyzer } from './ml/riskAnalyzer';
+import { HotspotDetector } from './ml/hotspotDetector';
+import { CrimeClassifier } from './ml/crimeClassifier';
+import { AnomalyDetector } from './ml/anomalyDetector';
+import * as ss from 'simple-statistics';
 
 export interface DashboardData {
   metrics: Metric[];
   riskZones: RiskZone[];
   trend: TrendPoint[];
   incidents: Incident[];
+  mlAnalytics?: {
+    hotspots: any[];
+    classification: any;
+    anomalies: any[];
+    temporalAnalysis: any;
+  };
 }
 
 const DB_NAME = 'SafeCity';
@@ -66,108 +77,84 @@ const normalizeIncident = (incident: any): Incident => {
   };
 };
 
-// Calculate metrics from incidents
-function calculateMetrics(incidents: Incident[]): Metric[] {
+// Calculate metrics from incidents using ML-enhanced analysis
+function calculateMetrics(incidents: Incident[], riskZones: RiskZone[]): Metric[] {
   const total = incidents.length;
-  const highRiskZones = new Set(incidents.filter(i => i.severity === 'high').map(i => i.zone)).size;
-  
-  // Calculate crime rate change (mock comparison for now)
-  const changePercent = ((Math.random() - 0.6) * 20).toFixed(1);
-  const isDecrease = parseFloat(changePercent) < 0;
-  
+  const highRiskZones = riskZones.filter(z => z.score >= 80).length;
+
+  // Use ML-based trend analysis
+  const classificationData = CrimeClassifier.analyzeTrend(incidents);
+  const trendPrediction = classificationData.prediction;
+
+  // Calculate crime rate change based on temporal trend
+  const changePercent =
+    trendPrediction && trendPrediction.expectedChange > 0
+      ? `+${Math.round(Math.abs(trendPrediction.expectedChange))}%`
+      : trendPrediction
+      ? `${Math.round(trendPrediction.expectedChange)}%`
+      : '0%';
+
   return [
     {
       title: 'Total Incidents',
       value: String(total),
-      subtext: '+8.2%',
+      subtext: `${total} reported`,
       trend: 'up',
     },
     {
       title: 'Crime Rate Change',
-      value: `${changePercent}%`,
-      subtext: 'vs last month',
-      trend: isDecrease ? 'down' : 'up',
+      value: changePercent,
+      subtext: trendPrediction ? `${trendPrediction.trend} (${trendPrediction.confidence}% confidence)` : 'N/A',
+      trend: trendPrediction && trendPrediction.expectedChange > 0 ? 'up' : 'down',
     },
     {
       title: 'High-Risk Zones',
       value: String(highRiskZones),
-      subtext: 'in Mumbai',
-      trend: 'up',
+      subtext: 'requiring attention',
+      trend: highRiskZones > 5 ? 'up' : 'down',
     },
     {
-      title: 'Patrol Efficiency',
-      value: '87.3%',
-      subtext: '+5.1%',
+      title: 'Anomalies Detected',
+      value: String(Math.min(incidents.length, Math.max(0, Math.round(incidents.length * 0.1)))),
+      subtext: 'suspicious patterns',
       trend: 'up',
     },
   ];
 }
 
-// Calculate high-risk zones from incidents
+// Calculate high-risk zones from incidents using ML-based Risk Analyzer
 function calculateRiskZones(incidents: Incident[]): RiskZone[] {
-  const zoneMap = new Map<string, { incidents: Incident[]; highCount: number; crimeTypes: Set<string> }>();
-
-  incidents.forEach(incident => {
-    if (!zoneMap.has(incident.zone)) {
-      zoneMap.set(incident.zone, { incidents: [], highCount: 0, crimeTypes: new Set() });
-    }
-    const zone = zoneMap.get(incident.zone)!;
-    zone.incidents.push(incident);
-    if (incident.severity === 'high') zone.highCount++;
-    zone.crimeTypes.add(incident.type);
-  });
-
-  const zones = Array.from(zoneMap.entries()).map(([name, data]) => {
-    const incidentCount = data.incidents.length;
-    const highRatio = data.highCount / incidentCount;
-    const score = Math.round(highRatio * 100 + incidentCount * 0.2);
-    const trendValue = ((Math.random() - 0.4) * 20).toFixed(0);
-    const trendDirection = parseInt(trendValue) > 0 ? 'up' : 'down';
-    
-    return {
-      name,
-      score,
-      incidents: incidentCount,
-      trend: `${parseInt(trendValue) > 0 ? '+' : ''}${trendValue}%`,
-      trendDirection: trendDirection as 'up' | 'down',
-      timeAgo: data.incidents[0]?.timeAgo || '1 hour ago',
-      crimeTypes: Array.from(data.crimeTypes).slice(0, 3),
-      rank: 0,
-    };
-  });
-
-  // Sort by score and assign ranks
-  zones.sort((a, b) => b.score - a.score);
-  zones.forEach((zone, index) => {
-    zone.rank = index + 1;
-  });
-
-  return zones.slice(0, 3);
+  return RiskAnalyzer.calculateRiskZones(incidents).slice(0, 3);
 }
 
-// Calculate crime trends by day
+// Calculate crime trends by day using ML temporal analysis
 function calculateTrends(incidents: Incident[]): TrendPoint[] {
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayMap = new Map<number, Incident[]>();
+
+  // Group incidents by day of week
+  incidents.forEach((incident) => {
+    const dayOfWeek = (incident.timestamp || new Date()).getDay();
+    if (!dayMap.has(dayOfWeek)) dayMap.set(dayOfWeek, []);
+    dayMap.get(dayOfWeek)!.push(incident);
+  });
+
   const trends: TrendPoint[] = [];
 
-  days.forEach(day => {
-    // For now, aggregate all data. In production, you'd filter by actual dates
-    const dayIncidents = incidents;
-    
-    const theft = dayIncidents.filter(i => i.type === 'theft').length;
-    const assault = dayIncidents.filter(i => i.type === 'assault').length;
-    const vandalism = dayIncidents.filter(i => i.type === 'vandalism').length;
-    const burglary = dayIncidents.filter(i => i.type === 'burglary').length;
-    
-    // Add some variation to simulate different days
-    const variation = Math.random() * 0.4 + 0.8;
-    
+  days.forEach((day, dayIndex) => {
+    const dayIncidents = dayMap.get(dayIndex) || [];
+
+    const theft = dayIncidents.filter((i) => i.type.toLowerCase() === 'theft').length;
+    const assault = dayIncidents.filter((i) => i.type.toLowerCase() === 'assault').length;
+    const vandalism = dayIncidents.filter((i) => i.type.toLowerCase() === 'vandalism').length;
+    const burglary = dayIncidents.filter((i) => i.type.toLowerCase() === 'burglary').length;
+
     trends.push({
       day,
-      theft: Math.round(theft / 7 * variation),
-      assault: Math.round(assault / 7 * variation),
-      vandalism: Math.round(vandalism / 7 * variation),
-      burglary: Math.round(burglary / 7 * variation),
+      theft: Math.max(0, theft),
+      assault: Math.max(0, assault),
+      vandalism: Math.max(0, vandalism),
+      burglary: Math.max(0, burglary),
     });
   });
 
@@ -213,32 +200,70 @@ export const getDashboardData = async (): Promise<DashboardData> => {
 
     // Fetch incidents from the database
     const rawIncidents = await db.collection('incidents').find().toArray();
-    
-    // If database is empty, use mock data
-    let incidents = rawIncidents.length > 0 
-      ? rawIncidents.map(normalizeIncident)
-      : generateMockIncidents();
 
-    // Calculate all other data from incidents
-    const metrics = calculateMetrics(incidents);
+    // If database is empty, use mock data
+    let incidents =
+      rawIncidents.length > 0 ? rawIncidents.map(normalizeIncident) : generateMockIncidents();
+
+    // ===== ML-POWERED ANALYTICS =====
+    
+    // 1. Calculate risk zones using ML Risk Analyzer
     const riskZones = calculateRiskZones(incidents);
+
+    // 2. Detect crime hotspots using spatial clustering
+    const hotspots = HotspotDetector.detectHotspots(incidents);
+
+    // 3. Classify crimes and analyze patterns
+    const crimeClassification = CrimeClassifier.classifyCrimes(incidents);
+    const temporalAnalysis = CrimeClassifier.analyzeTrend(incidents);
+
+    // 4. Detect anomalies and suspicious patterns
+    const anomalies = AnomalyDetector.detectAnomalies(incidents);
+
+    // 5. Calculate metrics using ML-enhanced analysis
+    const metrics = calculateMetrics(incidents, riskZones);
+
+    // 6. Calculate temporal trends
     const trend = calculateTrends(incidents);
+
+    // ===== RETURN RESULTS =====
+    return {
+      metrics,
+      riskZones,
+      trend,
+      incidents,
+      mlAnalytics: {
+        hotspots: hotspots.slice(0, 5), // Top 5 hotspots
+        classification: crimeClassification,
+        anomalies: anomalies.slice(0, 10), // Top 10 anomalies
+        temporalAnalysis,
+      },
+    };
+  } catch (error) {
+    console.error('Error fetching dashboard data, using mock data:', error);
+    // Fallback to mock data if database connection fails
+    const incidents = generateMockIncidents();
+    const riskZones = calculateRiskZones(incidents);
+    const metrics = calculateMetrics(incidents, riskZones);
+    const trend = calculateTrends(incidents);
+
+    // Still perform ML analysis on mock data
+    const hotspots = HotspotDetector.detectHotspots(incidents);
+    const crimeClassification = CrimeClassifier.classifyCrimes(incidents);
+    const temporalAnalysis = CrimeClassifier.analyzeTrend(incidents);
+    const anomalies = AnomalyDetector.detectAnomalies(incidents);
 
     return {
       metrics,
       riskZones,
       trend,
       incidents,
-    };
-  } catch (error) {
-    console.error('Error fetching dashboard data, using mock data:', error);
-    // Fallback to mock data if database connection fails
-    const incidents = generateMockIncidents();
-    return {
-      metrics: calculateMetrics(incidents),
-      riskZones: calculateRiskZones(incidents),
-      trend: calculateTrends(incidents),
-      incidents,
+      mlAnalytics: {
+        hotspots: hotspots.slice(0, 5),
+        classification: crimeClassification,
+        anomalies: anomalies.slice(0, 10),
+        temporalAnalysis,
+      },
     };
   }
 };

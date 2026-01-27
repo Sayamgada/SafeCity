@@ -17,6 +17,7 @@ interface CrimeDataPoint {
 
 interface CityCrimeMapProps {
   incidents: Incident[];
+  mlAnalytics?: any; // mlAnalytics.hotspots, classification, anomalies, temporalAnalysis
 }
 
 // Dynamically import map component (client-side only)
@@ -35,7 +36,7 @@ const MapView = dynamic(
   }
 );
 
-export default function CityCrimeMap({ incidents }: CityCrimeMapProps) {
+export default function CityCrimeMap({ incidents, mlAnalytics }: CityCrimeMapProps) {
   const [lastUpdated, setLastUpdated] = useState('');
   const [viewMode, setViewMode] = useState<'heatmap' | 'zones'>('heatmap');
 
@@ -150,7 +151,11 @@ export default function CityCrimeMap({ incidents }: CityCrimeMapProps) {
 
       {/* Map Container */}
       <div className="relative h-96 bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
-        <MapView crimeData={crimeData} viewMode={viewMode} />
+        <MapView
+          crimeData={crimeData}
+          viewMode={viewMode}
+          hotspots={mlAnalytics?.hotspots ?? []}
+        />
       </div>
 
       {/* Footer */}
