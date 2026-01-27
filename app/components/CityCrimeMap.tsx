@@ -67,8 +67,6 @@ export default function CityCrimeMap({ incidents }: CityCrimeMapProps) {
       time: incident.timeAgo,
       zone: incident.zone,
     }));
-    console.log('Processed crime data:', processed.length, 'items');
-    console.log('Sample processed data:', processed.slice(0, 2));
     return processed;
   }, [incidents]);
 
